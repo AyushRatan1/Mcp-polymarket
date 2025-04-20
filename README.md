@@ -1,5 +1,4 @@
 # PolyMarket MCP Server
-[![smithery badge](https://smithery.ai/badge/polymarket_mcp)](https://smithery.ai/server/polymarket_mcp)
 
 A Model Context Protocol (MCP) server that provides access to prediction market data through the PolyMarket API. This server implements a standardized interface for retrieving market information, prices, and historical data from prediction markets.
 
@@ -233,6 +232,4 @@ Error messages are returned in a clear, human-readable format.
 - mcp-core
 - python-dotenv>=1.0.0
 
-## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
