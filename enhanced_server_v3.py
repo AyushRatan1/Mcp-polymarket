@@ -16,7 +16,7 @@ from collections import defaultdict
 import numpy as np
 
 # Version information
-VERSION = "0.3.3"
+VERSION = "0.3.4"
 
 # Try importing Gemini AI, but don't fail if not available
 try:
@@ -770,119 +770,130 @@ def analyze_custom_portfolio(markets: List[Dict], portfolio_assets: Dict[str, fl
     market_correlations = []
     
     for market in markets:
-        # Handle binary markets (Yes/No)
-        yes_prob = market.get("yes_probability", 50) / 100
-        no_prob = market.get("no_probability", 50) / 100
-        volume = market.get("volume", 0)
-        liquidity = market.get("liquidity", 0)
-        
-        # Dynamic allocation based on market confidence and liquidity
-        # More liquid markets get higher allocation
-        liquidity_factor = min(1.0, max(0.2, (liquidity / 10000) * 0.5))
-        confidence_factor = abs(yes_prob - 0.5) * 2  # High for confident markets (near 0 or 1)
-        allocation_pct = min(5.0, max(0.5, 2.0 * liquidity_factor * confidence_factor))
-        allocation = total_value * (allocation_pct / 100)
-        
-        # Calculate detailed financial metrics
-        potential_gain = allocation * (1/yes_prob - 1) if yes_prob > 0 else 0
-        potential_loss = allocation
-        
-        # Expected value and volatility
-        expected_value = (yes_prob * potential_gain) - (no_prob * potential_loss)
-        volatility = (((potential_gain - expected_value) ** 2) * yes_prob + 
-                     ((0 - expected_value) ** 2) * no_prob) ** 0.5
-        
-        # Sharpe ratio (risk-adjusted return)
-        risk_free_rate = DEFAULT_RISK_FREE_RATE
-        sharpe_ratio = (expected_value / allocation - risk_free_rate) / (volatility / allocation) if volatility > 0 else 0
-        
-        # Kelly criterion for optimal position sizing
-        edge = yes_prob - (1-yes_prob)/(potential_gain/potential_loss) if potential_loss > 0 else 0
-        kelly_pct = max(0, edge)  # Kelly position size as percentage
-        
-        # Information ratio
-        information_ratio = expected_value / volatility if volatility > 0 else 0
-        
-        # Add to portfolio stats
-        total_impact += expected_value
-        total_volatility += volatility
-        risk_adjusted_returns.append(sharpe_ratio)
-        
-        # Determine relevance to portfolio based on sector
-        relevant_sectors = []
-        relevance_score = 0
-        market_title = market.get("title", "").lower()
-        market_desc = market.get("description", "").lower()
-        
-        # Enhanced sector keywords to better match markets to portfolio assets
-        sector_keywords = {
-            "Technology": ["tech", "software", "hardware", "ai", "computing", "internet", "apple", "microsoft", "google"],
-            "Financial Services": ["bank", "finance", "interest rate", "federal reserve", "inflation", "icici", "visa"],
-            "Energy": ["oil", "gas", "energy", "petroleum", "renewable", "climate"],
-            "Healthcare": ["health", "pharma", "medical", "biotech", "vaccine", "drug"],
-            "Communication Services": ["telecom", "media", "communication", "advertising", "broadcast"],
-            "Consumer": ["retail", "consumer", "food", "beverage", "goods", "services"],
-            "Political": ["election", "politician", "president", "government", "congress", "parliament", "vote", "canadian", "canada"]
-        }
-        
-        for sector, keywords in sector_keywords.items():
-            sector_relevance = sum(1 for kw in keywords if kw in market_title or kw in market_desc)
-            if sector_relevance > 0:
-                relevant_sectors.append(sector)
-                relevance_score += sector_relevance * results["sector_exposure"].get(sector, 0)
+        try:
+            # Handle binary markets (Yes/No)
+            yes_prob = market.get("yes_probability", 50) / 100
+            no_prob = market.get("no_probability", 50) / 100
+            volume = market.get("volume", 0)
+            liquidity = market.get("liquidity", 0)
+            
+            # Error handling for probability = 0 (to avoid division by zero)
+            if yes_prob <= 0:
+                yes_prob = 0.01  # Set a minimum probability to avoid division by zero
+            if no_prob <= 0:
+                no_prob = 0.01
                 
-                # Political markets get special handling for relevance
-                if sector == "Political" and sector_relevance > 0:
-                    # Emphasize political markets that may impact the portfolio's sectors
-                    for asset_sector, exposure in results["sector_exposure"].items():
-                        # Political decisions often impact financial services and energy sectors
-                        if asset_sector in ["Financial Services", "Energy"] and exposure > 10:
-                            relevance_score += exposure * 0.5
-        
-        # Normalize relevance score
-        relevance_score = min(100, relevance_score)
-        
-        # Run Monte Carlo simulation for this market
-        monte_carlo_results = monte_carlo_simulation({"yes_probability": yes_prob * 100, "allocation": allocation})
-        
-        # Record market analysis with Monte Carlo results
-        results["prediction_markets"].append({
-            "title": market.get("title"),
-            "event_id": market.get("event_id"),
-            "yes_probability": yes_prob * 100,
-            "allocation": allocation,
-            "allocation_percent": allocation_pct,
-            "potential_gain": potential_gain,
-            "potential_loss": potential_loss,
-            "expected_value": expected_value,
-            "volatility": volatility,
-            "sharpe_ratio": sharpe_ratio,
-            "kelly_criterion": kelly_pct,
-            "information_ratio": information_ratio,
-            "volume": volume,
-            "liquidity": liquidity,
-            "relevant_sectors": relevant_sectors,
-            "portfolio_relevance_score": relevance_score,
-            "monte_carlo": {
-                "mean_return": monte_carlo_results["mean_return"],
-                "var_95": monte_carlo_results["var_95"],
-                "cvar_95": monte_carlo_results["cvar_95"],
-                "confidence_interval_95": monte_carlo_results["ci_95"]
+            # Dynamic allocation based on market confidence and liquidity
+            # More liquid markets get higher allocation
+            liquidity_factor = min(1.0, max(0.2, (liquidity / 10000) * 0.5))
+            confidence_factor = abs(yes_prob - 0.5) * 2  # High for confident markets (near 0 or 1)
+            allocation_pct = min(5.0, max(0.5, 2.0 * liquidity_factor * confidence_factor))
+            allocation = total_value * (allocation_pct / 100)
+            
+            # Calculate detailed financial metrics
+            potential_gain = allocation * (1/yes_prob - 1) if yes_prob > 0 else 0
+            potential_loss = allocation
+            
+            # Expected value and volatility
+            expected_value = (yes_prob * potential_gain) - (no_prob * potential_loss)
+            volatility = max(0.01, (((potential_gain - expected_value) ** 2) * yes_prob + 
+                         ((0 - expected_value) ** 2) * no_prob) ** 0.5)
+            
+            # Sharpe ratio (risk-adjusted return)
+            risk_free_rate = DEFAULT_RISK_FREE_RATE
+            sharpe_ratio = (expected_value / allocation - risk_free_rate) / (volatility / allocation)
+            
+            # Kelly criterion for optimal position sizing
+            edge = yes_prob - (1-yes_prob)/(potential_gain/potential_loss) if potential_loss > 0 else 0
+            kelly_pct = max(0, edge)  # Kelly position size as percentage
+            
+            # Information ratio
+            information_ratio = expected_value / volatility
+            
+            # Add to portfolio stats
+            total_impact += expected_value
+            total_volatility += volatility
+            risk_adjusted_returns.append(sharpe_ratio)
+            
+            # Determine relevance to portfolio based on sector
+            relevant_sectors = []
+            relevance_score = 0
+            market_title = market.get("title", "").lower()
+            market_desc = market.get("description", "").lower()
+            
+            # Enhanced sector keywords to better match markets to portfolio assets
+            sector_keywords = {
+                "Technology": ["tech", "software", "hardware", "ai", "computing", "internet", "apple", "microsoft", "google"],
+                "Financial Services": ["bank", "finance", "interest rate", "federal reserve", "inflation", "icici", "visa"],
+                "Energy": ["oil", "gas", "energy", "petroleum", "renewable", "climate"],
+                "Healthcare": ["health", "pharma", "medical", "biotech", "vaccine", "drug"],
+                "Communication Services": ["telecom", "media", "communication", "advertising", "broadcast"],
+                "Consumer": ["retail", "consumer", "food", "beverage", "goods", "services"],
+                "Political": ["election", "politician", "president", "government", "congress", "parliament", "vote", "canadian", "canada"]
             }
-        })
+            
+            for sector, keywords in sector_keywords.items():
+                sector_relevance = sum(1 for kw in keywords if kw in market_title or kw in market_desc)
+                if sector_relevance > 0:
+                    relevant_sectors.append(sector)
+                    relevance_score += sector_relevance * results["sector_exposure"].get(sector, 0)
+                    
+                    # Political markets get special handling for relevance
+                    if sector == "Political" and sector_relevance > 0:
+                        # Emphasize political markets that may impact the portfolio's sectors
+                        for asset_sector, exposure in results["sector_exposure"].items():
+                            # Political decisions often impact financial services and energy sectors
+                            if asset_sector in ["Financial Services", "Energy"] and exposure > 10:
+                                relevance_score += exposure * 0.5
+            
+            # Normalize relevance score
+            relevance_score = min(100, relevance_score)
+            
+            # Run Monte Carlo simulation for this market
+            monte_carlo_results = monte_carlo_simulation({"yes_probability": yes_prob * 100, "allocation": allocation})
+            
+            # Record market analysis with Monte Carlo results
+            results["prediction_markets"].append({
+                "title": market.get("title"),
+                "event_id": market.get("event_id"),
+                "yes_probability": yes_prob * 100,
+                "allocation": allocation,
+                "allocation_percent": allocation_pct,
+                "potential_gain": potential_gain,
+                "potential_loss": potential_loss,
+                "expected_value": expected_value,
+                "volatility": volatility,
+                "sharpe_ratio": sharpe_ratio,
+                "kelly_criterion": kelly_pct,
+                "information_ratio": information_ratio,
+                "volume": volume,
+                "liquidity": liquidity,
+                "relevant_sectors": relevant_sectors,
+                "portfolio_relevance_score": relevance_score,
+                "monte_carlo": {
+                    "mean_return": monte_carlo_results["mean_return"],
+                    "var_95": monte_carlo_results["var_95"],
+                    "cvar_95": monte_carlo_results["cvar_95"],
+                    "confidence_interval_95": monte_carlo_results["ci_95"]
+                }
+            })
+        except Exception as e:
+            logger.error(f"Error processing market {market.get('event_id')}: {str(e)}")
+            # Continue with the next market
+            continue
     
     # Sort markets by relevance to portfolio
     results["prediction_markets"].sort(key=lambda x: x["portfolio_relevance_score"], reverse=True)
     
     # Calculate portfolio-wide metrics
-    portfolio_sharpe = sum(risk_adjusted_returns) / len(risk_adjusted_returns) if risk_adjusted_returns else 0
+    portfolio_sharpe = sum(risk_adjusted_returns) / max(1, len(risk_adjusted_returns))  # Avoid division by zero
     
     # Record risk metrics
     results["risk_metrics"] = {
         "total_exposure": sum(m["allocation"] for m in results["prediction_markets"]),
-        "exposure_percent": sum(m["allocation"] for m in results["prediction_markets"]) / total_value * 100,
+        "exposure_percent": (sum(m["allocation"] for m in results["prediction_markets"]) / total_value * 100) if total_value > 0 else 0,
         "expected_value": total_impact,
-        "expected_return_percent": total_impact / total_value * 100,
+        "expected_return_percent": (total_impact / total_value * 100) if total_value > 0 else 0,
         "portfolio_volatility": total_volatility,
         "portfolio_sharpe_ratio": portfolio_sharpe,
         "highest_conviction_market": max(results["prediction_markets"], 
@@ -892,8 +903,14 @@ def analyze_custom_portfolio(markets: List[Dict], portfolio_assets: Dict[str, fl
     
     # Run portfolio-wide analyses if we have markets
     if markets:
-        results["stress_tests"] = stress_test_portfolio(portfolio_assets, results["prediction_markets"], None, total_value)
-        results["correlations"] = multi_factor_correlation(results["prediction_markets"])
+        try:
+            results["stress_tests"] = stress_test_portfolio(portfolio_assets, results["prediction_markets"], None, total_value)
+            results["correlations"] = multi_factor_correlation(results["prediction_markets"])
+        except Exception as e:
+            logger.error(f"Error running portfolio-wide analyses: {str(e)}")
+            results["analysis_limitations"].append(
+                f"NOTE: Some analyses could not be completed due to data limitations. Error: {str(e)}"
+            )
     
     # Add geopolitical sensitivity warning
     results["analysis_limitations"].append(
@@ -912,24 +929,25 @@ def analyze_custom_portfolio(markets: List[Dict], portfolio_assets: Dict[str, fl
         results["recommendations"].append("HOLD/AVOID: These markets do not offer positive expected value for your portfolio composition.")
     
     # Add specific recommendations for position sizing
-    best_market = max(results["prediction_markets"], key=lambda x: x["information_ratio"]) if results["prediction_markets"] else None
-    if best_market and best_market["kelly_criterion"] > 0.1:
-        results["recommendations"].append(f"OPTIMIZE ALLOCATION: Consider increasing allocation to '{best_market['title']}' for optimal returns.")
+    if results["prediction_markets"]:
+        best_market = max(results["prediction_markets"], key=lambda x: x["information_ratio"])
+        if best_market["kelly_criterion"] > 0.1:
+            results["recommendations"].append(f"OPTIMIZE ALLOCATION: Consider increasing allocation to '{best_market['title']}' for optimal returns.")
     
     # Add risk management recommendation
     if results["risk_metrics"]["exposure_percent"] > 15:
         results["recommendations"].append("RISK ALERT: Total prediction market exposure exceeds 15% of portfolio. Consider diversifying or reducing position sizes.")
     
     # Add stress test recommendation
-    if results["stress_tests"].get("stress_scenarios"):
+    if "stress_tests" in results and "stress_scenarios" in results["stress_tests"]:
         worst_scenario = min(results["stress_tests"]["stress_scenarios"], key=lambda x: x["total_impact_percentage"])
         if worst_scenario["total_impact_percentage"] < -15:
             results["recommendations"].append(f"STRESS VULNERABILITY: Portfolio shows high sensitivity to '{worst_scenario['scenario']}' scenario. Consider hedging strategies.")
     
     # Add correlation recommendation
-    if results["correlations"].get("top_correlations") and len(results["correlations"]["top_correlations"]) > 0:
-        if abs(results["correlations"]["top_correlations"][0]["correlation"]) > 0.7:
-            top_corr = results["correlations"]["top_correlations"][0]
+    if "correlations" in results and "top_correlations" in results["correlations"] and len(results["correlations"]["top_correlations"]) > 0:
+        top_corr = results["correlations"]["top_correlations"][0]
+        if abs(top_corr["correlation"]) > 0.7:
             direction = "positive" if top_corr["correlation"] > 0 else "negative"
             results["recommendations"].append(f"CORRELATION INSIGHT: Strong {direction} correlation detected between '{top_corr['market_title']}' and {top_corr['factor']}. Consider as potential hedge.")
     
@@ -939,7 +957,7 @@ def analyze_custom_portfolio(markets: List[Dict], portfolio_assets: Dict[str, fl
         results["recommendations"].append(f"SECTOR DIVERSIFICATION: Portfolio is heavily concentrated in {', '.join(overexposed_sectors)}. Consider reducing exposure.")
     
     # Generate summary with data attribution
-    impact_pct = (total_impact / total_value) * 100
+    impact_pct = (total_impact / total_value) * 100 if total_value > 0 else 0
     if impact_pct > 0:
         if impact_pct > 3:
             results["summary"] = f"HIGH POSITIVE IMPACT: Based on Polymarket prediction data, the analyzed markets could have a substantial positive expected impact of ${total_impact:,.2f} ({impact_pct:.2f}%) on your portfolio with a Sharpe ratio of {portfolio_sharpe:.2f}."
@@ -1084,6 +1102,140 @@ Format your response in JSON only, with this structure:
         # Fallback to generating an estimate if Gemini fails
         return generate_market_analysis(market, timeframes, portfolio_value)
 
+def verify_portfolio_risk_claims(portfolio_data: Dict, verification_date: str = None) -> Dict:
+    """
+    Verify claims in portfolio risk analysis against real-time prediction markets.
+    
+    Args:
+        portfolio_data: Dict containing portfolio risk claims to verify
+        verification_date: Date string for when verification is performed (defaults to today)
+        
+    Returns:
+        Dict with verification results and recommendations
+    """
+    if verification_date is None:
+        verification_date = datetime.now().strftime("%B %d, %Y")
+    
+    verification_results = {
+        "verification_date": verification_date,
+        "portfolio_name": portfolio_data.get("portfolio_name", "Unnamed Portfolio"),
+        "total_value": portfolio_data.get("total_value", 0),
+        "claim_verifications": [],
+        "overall_reliability_score": 0,
+        "recommendations": [],
+        "data_sources": ["PolyMarket", "Good Judgment Open", "Financial news outlets"],
+        "version": VERSION
+    }
+    
+    # Verify each claim in the portfolio data
+    claims = portfolio_data.get("claims", [])
+    valid_claims = 0
+    total_claims = len(claims)
+    
+    for claim in claims:
+        claim_result = {
+            "claim_title": claim.get("title", "Untitled Claim"),
+            "claimed_probability": claim.get("probability", 0),
+            "claimed_impact": claim.get("impact", 0),
+            "claim_category": claim.get("category", "Uncategorized"),
+            "verification_status": "⚠️ Unknown",
+            "real_probability": None,
+            "probability_difference": None,
+            "impact_assessment": "⚠️ Unverified",
+            "verdict": "⚠️ Insufficient data",
+            "recommendation": ""
+        }
+        
+        # Check claim against market data if available
+        if not market_data:
+            claim_result["verification_status"] = "⚠️ Cannot verify - no market data available"
+        else:
+            # Find markets related to the claim
+            related_markets = vector_search(claim_result["claim_title"], vector_db, 3)
+            
+            if related_markets:
+                # Use the most relevant market for verification
+                best_match = related_markets[0]
+                
+                # Extract probability from best matching market
+                real_prob = best_match.get("yes_probability", 0)
+                claimed_prob = claim_result["claimed_probability"]
+                
+                # Calculate difference
+                claim_result["real_probability"] = real_prob
+                claim_result["probability_difference"] = real_prob - claimed_prob
+                
+                # Assess the probability claim
+                if abs(claim_result["probability_difference"]) <= 5:
+                    claim_result["verification_status"] = "✅ Accurate probability"
+                    valid_claims += 1
+                elif abs(claim_result["probability_difference"]) <= 15:
+                    claim_result["verification_status"] = "⚠️ Somewhat inaccurate probability"
+                    claim_result["recommendation"] = f"Update probability from {claimed_prob}% to {real_prob}%"
+                else:
+                    claim_result["verification_status"] = "❌ Significantly inaccurate probability"
+                    claim_result["recommendation"] = f"Urgent update needed: Use {real_prob}% instead of {claimed_prob}%"
+                
+                # Assess impact claim if provided
+                if "impact" in claim and "impact_assets" in claim:
+                    impact_value = claim.get("impact", 0)
+                    impact_assets = claim.get("impact_assets", [])
+                    
+                    # Logic to verify impact assessment
+                    # This is a simplified version - in reality would need complex financial modeling
+                    if real_prob < 10 and abs(impact_value) > 5:
+                        claim_result["impact_assessment"] = "❌ Impact likely overstated for low-probability event"
+                    elif real_prob > 90 and abs(impact_value) < 2:
+                        claim_result["impact_assessment"] = "❌ Impact likely understated for high-probability event"
+                    else:
+                        claim_result["impact_assessment"] = "✅ Reasonable impact assessment"
+                        valid_claims += 0.5  # Count impact assessment as half a valid claim
+                
+                # Set overall verdict
+                if "❌" in claim_result["verification_status"] or "❌" in claim_result["impact_assessment"]:
+                    claim_result["verdict"] = "❌ Needs significant revision"
+                elif "⚠️" in claim_result["verification_status"] or "⚠️" in claim_result["impact_assessment"]:
+                    claim_result["verdict"] = "⚠️ Needs minor updates"
+                else:
+                    claim_result["verdict"] = "✅ Valid and reliable"
+                    
+            else:
+                claim_result["verification_status"] = "⚠️ No matching markets found for verification"
+        
+        verification_results["claim_verifications"].append(claim_result)
+    
+    # Calculate overall reliability score (0-100)
+    if total_claims > 0:
+        reliability_score = (valid_claims / (total_claims * 1.5)) * 100  # Adjusted for impact assessments
+        verification_results["overall_reliability_score"] = min(100, round(reliability_score))
+    
+    # Generate overall recommendations
+    if verification_results["overall_reliability_score"] >= 80:
+        verification_results["recommendations"].append(
+            "✅ Analysis is generally reliable. Minor updates recommended for specific claims as noted."
+        )
+    elif verification_results["overall_reliability_score"] >= 50:
+        verification_results["recommendations"].append(
+            "⚠️ Analysis needs moderate revision. Update probabilities to match current market data."
+        )
+    else:
+        verification_results["recommendations"].append(
+            "❌ Analysis requires significant updates. Multiple probability and impact claims are out of alignment with market data."
+        )
+    
+    # Add specific recommendations for interest rate sensitive assets if relevant
+    interest_rate_claims = [c for c in verification_results["claim_verifications"] 
+                           if any(term in c["claim_title"].lower() for term in ["rate", "yield", "fed", "treasury"])]
+    
+    if interest_rate_claims:
+        high_prob_rate_change = any(c["real_probability"] > 70 for c in interest_rate_claims if c["real_probability"])
+        if high_prob_rate_change:
+            verification_results["recommendations"].append(
+                "⚠️ High probability of interest rate changes detected. Review rate-sensitive holdings (ICICI, Tesla, growth stocks)."
+            )
+    
+    return verification_results
+
 @server.list_tools()
 async def handle_list_tools() -> list[types.Tool]:
     """List available tools for the enhanced PolyMarket server."""
@@ -1190,6 +1342,24 @@ async def handle_list_tools() -> list[types.Tool]:
                     }
                 },
                 "required": ["portfolio_assets", "query"]
+            }
+        ),
+        types.Tool(
+            name="verify-portfolio-risk-claims",
+            description="Verify claims in portfolio risk analysis against current prediction market data",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "portfolio_data": {
+                        "type": "object",
+                        "description": "Portfolio data with claims to verify"
+                    },
+                    "verification_date": {
+                        "type": "string",
+                        "description": "Date for verification (defaults to today)"
+                    }
+                },
+                "required": ["portfolio_data"]
             }
         )
     ]
@@ -1480,6 +1650,71 @@ async def handle_call_tool(
             # Risk disclaimer
             results.append("\n## DISCLAIMER")
             results.append(f"*This analysis is based on prediction market data from Polymarket as of {current_date} and should not be considered financial advice. Past performance is not indicative of future results. All investments involve risk, including the possible loss of principal. VaR and Monte Carlo simulations are estimates only and not guarantees of future performance. Prediction markets can shift rapidly with geopolitical events, so consider refreshing this analysis if significant events occur.*")
+            
+            return [types.TextContent(type="text", text="\n".join(results))]
+            
+        elif name == "verify-portfolio-risk-claims":
+            if not arguments or "portfolio_data" not in arguments:
+                return [types.TextContent(
+                    type="text", 
+                    text="Error: portfolio_data parameter is required."
+                )]
+                
+            portfolio_data = arguments["portfolio_data"]
+            verification_date = arguments.get("verification_date")
+            
+            # Ensure we have market data
+            if not market_data or not vector_db:
+                await refresh_prediction_markets()
+                
+            # Verify portfolio risk claims
+            verification_results = verify_portfolio_risk_claims(portfolio_data, verification_date)
+            
+            # Format the results as a detailed report
+            current_date = datetime.now().strftime("%B %d, %Y")
+            
+            results = [f"# PORTFOLIO RISK ANALYSIS VERIFICATION\n*Verified on {verification_results['verification_date']} using Polymarket data*\n"]
+            
+            # Portfolio summary
+            results.append("## PORTFOLIO SUMMARY")
+            results.append(f"Portfolio: {verification_results['portfolio_name']}")
+            results.append(f"Total Value: ${verification_results['total_value']:,.2f}")
+            results.append(f"Overall Reliability Score: {verification_results['overall_reliability_score']}/100\n")
+            
+            # Claim verifications
+            results.append("## CLAIM VERIFICATIONS")
+            for i, claim in enumerate(verification_results["claim_verifications"]):
+                results.append(f"\n### {i+1}. {claim['claim_title']}")
+                results.append(f"**Category:** {claim['claim_category']}")
+                results.append(f"**Claimed Probability:** {claim['claimed_probability']}%")
+                
+                if claim["real_probability"] is not None:
+                    results.append(f"**Actual Market Probability:** {claim['real_probability']:.1f}%")
+                    results.append(f"**Difference:** {claim['probability_difference']:+.1f}%")
+                
+                results.append(f"**Status:** {claim['verification_status']}")
+                
+                if claim["impact_assessment"] != "⚠️ Unverified":
+                    results.append(f"**Impact Assessment:** {claim['impact_assessment']}")
+                    results.append(f"**Claimed Impact:** {claim['claimed_impact']}%")
+                
+                results.append(f"**Verdict:** {claim['verdict']}")
+                
+                if claim["recommendation"]:
+                    results.append(f"**Recommendation:** {claim['recommendation']}")
+            
+            # Overall recommendations
+            results.append("\n## RECOMMENDATIONS")
+            for rec in verification_results["recommendations"]:
+                results.append(f"- {rec}")
+            
+            # Data sources
+            results.append("\n## DATA SOURCES")
+            results.append(f"This verification was performed using data from: {', '.join(verification_results['data_sources'])}")
+            
+            # Disclaimer
+            results.append("\n## DISCLAIMER")
+            results.append("*This verification is based on current prediction market data and should not be considered financial advice. Market probabilities can shift rapidly with new information.*")
             
             return [types.TextContent(type="text", text="\n".join(results))]
             
