@@ -15,12 +15,15 @@ import mcp.server.stdio
 from collections import defaultdict
 import numpy as np
 
+# Version information
+VERSION = "0.3.3"
+
 # Try importing Gemini AI, but don't fail if not available
 try:
     import google.generativeai as genai
     HAS_GEMINI = True
     # Configure Gemini API
-    GEMINI_API_KEY = "AIzaSyB4vsx2Qj93x-1TSVDuiyEcLkrET0vG78I"
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyB4vsx2Qj93x-1TSVDuiyEcLkrET0vG78I")
     genai.configure(api_key=GEMINI_API_KEY)
     print("Successfully loaded Google Generative AI")
 except ImportError:
@@ -35,6 +38,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger("polymarket_enhanced_v3")
 
+# Constants
+DEFAULT_RISK_FREE_RATE = 0.045  # 4.5% risk-free rate
+POLYMARKET_API_BASE = "https://gamma-api.polymarket.com"
+MAX_QUERY_LIMIT = 1000
+DATA_REFRESH_MINUTES = 30
+
 # In-memory storage for our "vector DB"
 market_data = []
 last_refresh_time = None
@@ -44,7 +53,20 @@ vector_db = []
 server = Server("polymarket_enhanced")
 
 async def fetch_markets_from_endpoint(url: str, client: httpx.AsyncClient) -> List[Dict]:
-    """Fetch markets from a specific PolyMarket API endpoint."""
+    """
+    Fetch markets from a specific PolyMarket API endpoint.
+    
+    Args:
+        url: The API endpoint URL
+        client: The httpx client to use
+        
+    Returns:
+        List of market data dictionaries
+        
+    Raises:
+        HTTPStatusError: On HTTP errors (handled internally)
+        Exception: On other errors (handled internally)
+    """
     try:
         logger.info(f"Fetching from: {url}")
         response = await client.get(url)
@@ -57,17 +79,28 @@ async def fetch_markets_from_endpoint(url: str, client: httpx.AsyncClient) -> Li
         else:
             logger.warning(f"Unexpected response format from {url}: {type(data)}")
             return []
+    except httpx.HTTPStatusError as e:
+        logger.error(f"HTTP error fetching from {url}: {str(e)}")
+        return []
     except Exception as e:
         logger.error(f"Error fetching from {url}: {str(e)}")
         return []
 
 async def refresh_prediction_markets() -> List[Dict]:
-    """Fetch and update market data from PolyMarket public API endpoints."""
+    """
+    Fetch and update market data from PolyMarket public API endpoints.
+    
+    Returns:
+        List of processed market data dictionaries
+        
+    Note:
+        Updates global market_data and vector_db variables
+    """
     global market_data, last_refresh_time, vector_db
     
     # Check if we've refreshed in the last 30 minutes
     current_time = datetime.now()
-    if last_refresh_time and (current_time - last_refresh_time) < timedelta(minutes=30):
+    if last_refresh_time and (current_time - last_refresh_time) < timedelta(minutes=DATA_REFRESH_MINUTES):
         logger.info(f"Using cached data from {last_refresh_time}")
         return market_data
     
@@ -75,11 +108,11 @@ async def refresh_prediction_markets() -> List[Dict]:
     
     # URLs to fetch data from
     urls = [
-        "https://gamma-api.polymarket.com/events?order=createdAt&ascending=false&tag_slug=markets&limit=1000",
-        "https://gamma-api.polymarket.com/events?order=createdAt&ascending=false&tag_slug=politics&limit=1000",
-        "https://gamma-api.polymarket.com/events?order=createdAt&ascending=false&tag_slug=economy&limit=1000",
-        "https://gamma-api.polymarket.com/events?order=createdAt&ascending=false&tag_slug=crypto&limit=1000",
-        "https://gamma-api.polymarket.com/events?order=createdAt&ascending=false&tag_slug=sports&limit=1000"
+        f"{POLYMARKET_API_BASE}/events?order=createdAt&ascending=false&tag_slug=markets&limit={MAX_QUERY_LIMIT}",
+        f"{POLYMARKET_API_BASE}/events?order=createdAt&ascending=false&tag_slug=politics&limit={MAX_QUERY_LIMIT}",
+        f"{POLYMARKET_API_BASE}/events?order=createdAt&ascending=false&tag_slug=economy&limit={MAX_QUERY_LIMIT}",
+        f"{POLYMARKET_API_BASE}/events?order=createdAt&ascending=false&tag_slug=crypto&limit={MAX_QUERY_LIMIT}",
+        f"{POLYMARKET_API_BASE}/events?order=createdAt&ascending=false&tag_slug=sports&limit={MAX_QUERY_LIMIT}"
     ]
     
     all_markets = []
@@ -639,8 +672,32 @@ def analyze_custom_portfolio(markets: List[Dict], portfolio_assets: Dict[str, fl
         total_value: Total portfolio value in USD
         
     Returns:
-        Dict with comprehensive portfolio analysis
+        Dict with comprehensive portfolio analysis including risk metrics, stress tests, and recommendations
+        
+    Note:
+        This function implements advanced financial analysis techniques including:
+        - Monte Carlo simulation for risk assessment
+        - Sharpe ratio and other risk-adjusted return calculations
+        - Sector-based portfolio analysis
+        - Stress testing under various market scenarios
     """
+    # Validate input data
+    if not markets:
+        logger.warning("No markets provided for portfolio analysis")
+        markets = []
+    
+    if not portfolio_assets:
+        logger.warning("No portfolio assets provided for analysis")
+        return {
+            "error": "No portfolio assets provided",
+            "generation_timestamp": datetime.now().isoformat()
+        }
+        
+    # Validate portfolio allocation (should sum to approximately 100%)
+    total_allocation = sum(portfolio_assets.values())
+    if total_allocation < 95 or total_allocation > 105:
+        logger.warning(f"Portfolio allocation sum is {total_allocation}%, expected close to 100%")
+    
     results = {
         "total_value": total_value,
         "assets": [],
@@ -653,19 +710,25 @@ def analyze_custom_portfolio(markets: List[Dict], portfolio_assets: Dict[str, fl
         "stress_tests": {},  # Add stress test results
         "correlations": {},  # Add correlation analysis
         "generation_timestamp": datetime.now().isoformat(),  # Add timestamp
-        "data_source": "Polymarket API",  # Add data source attribution
-        "analysis_limitations": []  # Add section for analysis limitations
+        "data_source": "Polymarket",  # Add data source attribution
+        "analysis_limitations": [],  # Add section for analysis limitations
+        "version": VERSION  # Add version information
     }
     
-    # Check if "Other assets" is in the portfolio and highlight potential limitation
-    if "Other assets" in portfolio_assets:
-        other_assets_pct = portfolio_assets["Other assets"]
-        if other_assets_pct > 30:
-            results["analysis_limitations"].append(
-                f"WARNING: 'Other assets' comprise {other_assets_pct}% of the portfolio but aren't specified. "
-                "This high allocation to unknown assets significantly reduces analysis accuracy. "
-                "Consider breaking down these assets by type (global ETFs, commodities, bonds, etc.) for better results."
-            )
+    # Check if "Other assets" or "Other investments" is in the portfolio and highlight potential limitation
+    other_keys = ["Other assets", "Other investments", "Other"]
+    other_assets_pct = 0
+    
+    for key in other_keys:
+        if key in portfolio_assets:
+            other_assets_pct += portfolio_assets[key]
+            
+    if other_assets_pct > 30:
+        results["analysis_limitations"].append(
+            f"WARNING: Unspecified 'Other' assets comprise {other_assets_pct}% of the portfolio. "
+            "This high allocation to uncategorized assets significantly reduces analysis accuracy. "
+            "Consider breaking down these assets by type (global ETFs, commodities, bonds, etc.) for better results."
+        )
     
     # Process each asset
     for asset_name, allocation_pct in portfolio_assets.items():
@@ -673,13 +736,17 @@ def analyze_custom_portfolio(markets: List[Dict], portfolio_assets: Dict[str, fl
         
         # Extract sector from asset name (simplified)
         sector = "Technology"
-        if any(term in asset_name.lower() for term in ["bank", "financial", "insurance", "visa", "mastercard"]):
+        if any(term in asset_name.lower() for term in ["bank", "financial", "insurance", "visa", "mastercard", "icici"]):
             sector = "Financial Services"
         elif any(term in asset_name.lower() for term in ["oil", "gas", "energy", "solar", "petroleum"]):
             sector = "Energy"
         elif any(term in asset_name.lower() for term in ["healthcare", "pharma", "biotech", "medical"]):
             sector = "Healthcare"
-        elif "other" in asset_name.lower():
+        elif any(term in asset_name.lower() for term in ["telecom", "communication", "media", "advertising"]):
+            sector = "Communication Services"
+        elif any(term in asset_name.lower() for term in ["retail", "consumer", "food", "beverage"]):
+            sector = "Consumer"
+        elif any(term in asset_name.lower() for term in ["other"]):
             sector = "Unspecified"
         
         # Add to sector exposure
@@ -703,6 +770,7 @@ def analyze_custom_portfolio(markets: List[Dict], portfolio_assets: Dict[str, fl
     market_correlations = []
     
     for market in markets:
+        # Handle binary markets (Yes/No)
         yes_prob = market.get("yes_probability", 50) / 100
         no_prob = market.get("no_probability", 50) / 100
         volume = market.get("volume", 0)
@@ -725,7 +793,7 @@ def analyze_custom_portfolio(markets: List[Dict], portfolio_assets: Dict[str, fl
                      ((0 - expected_value) ** 2) * no_prob) ** 0.5
         
         # Sharpe ratio (risk-adjusted return)
-        risk_free_rate = 0.045  # 4.5% risk-free rate
+        risk_free_rate = DEFAULT_RISK_FREE_RATE
         sharpe_ratio = (expected_value / allocation - risk_free_rate) / (volatility / allocation) if volatility > 0 else 0
         
         # Kelly criterion for optimal position sizing
@@ -746,11 +814,15 @@ def analyze_custom_portfolio(markets: List[Dict], portfolio_assets: Dict[str, fl
         market_title = market.get("title", "").lower()
         market_desc = market.get("description", "").lower()
         
+        # Enhanced sector keywords to better match markets to portfolio assets
         sector_keywords = {
-            "Technology": ["tech", "software", "hardware", "ai", "computing", "internet"],
-            "Financial Services": ["bank", "finance", "interest rate", "federal reserve", "inflation"],
-            "Energy": ["oil", "gas", "energy", "petroleum", "renewable"],
-            "Healthcare": ["health", "pharma", "medical", "biotech", "vaccine"]
+            "Technology": ["tech", "software", "hardware", "ai", "computing", "internet", "apple", "microsoft", "google"],
+            "Financial Services": ["bank", "finance", "interest rate", "federal reserve", "inflation", "icici", "visa"],
+            "Energy": ["oil", "gas", "energy", "petroleum", "renewable", "climate"],
+            "Healthcare": ["health", "pharma", "medical", "biotech", "vaccine", "drug"],
+            "Communication Services": ["telecom", "media", "communication", "advertising", "broadcast"],
+            "Consumer": ["retail", "consumer", "food", "beverage", "goods", "services"],
+            "Political": ["election", "politician", "president", "government", "congress", "parliament", "vote", "canadian", "canada"]
         }
         
         for sector, keywords in sector_keywords.items():
@@ -758,6 +830,14 @@ def analyze_custom_portfolio(markets: List[Dict], portfolio_assets: Dict[str, fl
             if sector_relevance > 0:
                 relevant_sectors.append(sector)
                 relevance_score += sector_relevance * results["sector_exposure"].get(sector, 0)
+                
+                # Political markets get special handling for relevance
+                if sector == "Political" and sector_relevance > 0:
+                    # Emphasize political markets that may impact the portfolio's sectors
+                    for asset_sector, exposure in results["sector_exposure"].items():
+                        # Political decisions often impact financial services and energy sectors
+                        if asset_sector in ["Financial Services", "Energy"] and exposure > 10:
+                            relevance_score += exposure * 0.5
         
         # Normalize relevance score
         relevance_score = min(100, relevance_score)
@@ -810,9 +890,10 @@ def analyze_custom_portfolio(markets: List[Dict], portfolio_assets: Dict[str, fl
         "diversification_score": len(set(sector for m in results["prediction_markets"] for sector in m["relevant_sectors"])) / 4
     }
     
-    # Run portfolio-wide analyses
-    results["stress_tests"] = stress_test_portfolio(portfolio_assets, results["prediction_markets"], None, total_value)
-    results["correlations"] = multi_factor_correlation(results["prediction_markets"])
+    # Run portfolio-wide analyses if we have markets
+    if markets:
+        results["stress_tests"] = stress_test_portfolio(portfolio_assets, results["prediction_markets"], None, total_value)
+        results["correlations"] = multi_factor_correlation(results["prediction_markets"])
     
     # Add geopolitical sensitivity warning
     results["analysis_limitations"].append(
@@ -840,15 +921,17 @@ def analyze_custom_portfolio(markets: List[Dict], portfolio_assets: Dict[str, fl
         results["recommendations"].append("RISK ALERT: Total prediction market exposure exceeds 15% of portfolio. Consider diversifying or reducing position sizes.")
     
     # Add stress test recommendation
-    worst_scenario = min(results["stress_tests"]["stress_scenarios"], key=lambda x: x["total_impact_percentage"])
-    if worst_scenario["total_impact_percentage"] < -15:
-        results["recommendations"].append(f"STRESS VULNERABILITY: Portfolio shows high sensitivity to '{worst_scenario['scenario']}' scenario. Consider hedging strategies.")
+    if results["stress_tests"].get("stress_scenarios"):
+        worst_scenario = min(results["stress_tests"]["stress_scenarios"], key=lambda x: x["total_impact_percentage"])
+        if worst_scenario["total_impact_percentage"] < -15:
+            results["recommendations"].append(f"STRESS VULNERABILITY: Portfolio shows high sensitivity to '{worst_scenario['scenario']}' scenario. Consider hedging strategies.")
     
     # Add correlation recommendation
-    if results["correlations"]["top_correlations"] and abs(results["correlations"]["top_correlations"][0]["correlation"]) > 0.7:
-        top_corr = results["correlations"]["top_correlations"][0]
-        direction = "positive" if top_corr["correlation"] > 0 else "negative"
-        results["recommendations"].append(f"CORRELATION INSIGHT: Strong {direction} correlation detected between '{top_corr['market_title']}' and {top_corr['factor']}. Consider as potential hedge.")
+    if results["correlations"].get("top_correlations") and len(results["correlations"]["top_correlations"]) > 0:
+        if abs(results["correlations"]["top_correlations"][0]["correlation"]) > 0.7:
+            top_corr = results["correlations"]["top_correlations"][0]
+            direction = "positive" if top_corr["correlation"] > 0 else "negative"
+            results["recommendations"].append(f"CORRELATION INSIGHT: Strong {direction} correlation detected between '{top_corr['market_title']}' and {top_corr['factor']}. Consider as potential hedge.")
     
     # Add sector-specific insights
     overexposed_sectors = [s for s, pct in results["sector_exposure"].items() if pct > 30]
@@ -1414,33 +1497,59 @@ async def handle_call_tool(
         )]
 
 async def main():
-    """Main entry point for the enhanced MCP server."""
+    """
+    Main entry point for the enhanced MCP server.
+    Handles initialization, data loading, and graceful shutdown.
+    """
+    startup_msg = f"Starting enhanced PolyMarket MCP server v{VERSION}"
+    
     if HAS_GEMINI:
-        logger.info("Starting enhanced PolyMarket MCP server v3 with Gemini AI and vector database integration...")
+        startup_msg += " with Gemini AI and vector database integration"
+        logger.info(f"{startup_msg}...")
     else:
-        logger.info("Starting enhanced PolyMarket MCP server v3 with vector database integration (Gemini AI not available)...")
+        startup_msg += " with vector database integration (Gemini AI not available)"
+        logger.info(f"{startup_msg}...")
     
     # Initial data refresh
     try:
+        logger.info("Performing initial market data refresh")
         await refresh_prediction_markets()
+        logger.info(f"Successfully loaded {len(market_data)} markets")
     except Exception as e:
         logger.error(f"Error in initial data refresh: {str(e)}")
+        logger.warning("Continuing without initial data - will attempt refresh on first request")
     
-    async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-        logger.info("Server stdio initialized")
-        await server.run(
-            read_stream,
-            write_stream,
-            InitializationOptions(
-                server_name="polymarket_enhanced",
-                server_version="0.3.0",
-                capabilities=server.get_capabilities(
-                    notification_options=NotificationOptions(),
-                    experimental_capabilities={},
+    # Set up signal handlers for graceful shutdown
+    def handle_exit():
+        logger.info("Received exit signal, shutting down server...")
+    
+    # Run server
+    try:
+        async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
+            logger.info("Server stdio initialized")
+            await server.run(
+                read_stream,
+                write_stream,
+                InitializationOptions(
+                    server_name="polymarket_enhanced",
+                    server_version=VERSION,
+                    capabilities=server.get_capabilities(
+                        notification_options=NotificationOptions(),
+                        experimental_capabilities={},
+                    ),
                 ),
-            ),
-        )
-    logger.info("Server shutting down...")
+            )
+    except Exception as e:
+        logger.error(f"Server error: {str(e)}")
+    finally:
+        logger.info("Server shutting down...")
 
 if __name__ == "__main__":
-    asyncio.run(main()) 
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("Server terminated by keyboard interrupt")
+    except Exception as e:
+        logger.error(f"Unhandled exception: {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc()) 
