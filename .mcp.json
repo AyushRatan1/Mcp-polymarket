@@ -1,0 +1,9 @@
+{
+    "servers": [
+        {
+            "name": "polymarket_enhanced",
+            "command": ["python3", "enhanced_server_v3.py"],
+            "transport": "stdio"
+        }
+    ]
+} 

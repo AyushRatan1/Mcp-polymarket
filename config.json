@@ -1,0 +1,11 @@
+{
+    "model": "claude-3-sonnet-20240229",
+    "api_key": "YOUR_ANTHROPIC_API_KEY",
+    "max_tokens": 4096,
+    "temperature": 0.7,
+    "server": {
+        "host": "localhost",
+        "port": 3000,
+        "debug": true
+    }
+} 

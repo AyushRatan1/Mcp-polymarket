@@ -1,235 +1,84 @@
-# PolyMarket MCP Server
+# Polymarket Enhanced MCP Server
 
-A Model Context Protocol (MCP) server that provides access to prediction market data through the PolyMarket API. This server implements a standardized interface for retrieving market information, prices, and historical data from prediction markets.
+A powerful MCP server for analyzing Polymarket prediction markets with AI integration.
+
+## Setup
+
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd Mcp-polymarket
+```
+
+2. Create and activate a virtual environment:
+```bash
+python3 -m venv venv
+source venv/bin/activate  # On Windows: .\venv\Scripts\activate
+```
+
+3. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+4. Create a `.env` file in the root directory with your API keys:
+```env
+GEMINI_API_KEY=your_gemini_api_key_here
+```
+
+5. Run the server:
+```bash
+python3 enhanced_server_v3.py
+```
 
 ## Features
 
-- Real-time prediction market data with current prices and probabilities
-- Detailed market information including categories, resolution dates, and descriptions
-- Historical price and volume data with customizable timeframes (1d, 7d, 30d, all)
-- Built-in error handling and rate limit management
-- Clean data formatting for easy consumption
+- Real-time prediction market data from Polymarket
+- AI-powered market analysis using Google's Gemini
+- Portfolio impact analysis
+- Market trend analysis
+- Risk assessment tools
 
-## Installation
+## Configuration
 
-#### Installing via Smithery
+The server can be configured through environment variables in the `.env` file:
 
-To install PolyMarket Predictions for Claude Desktop automatically via [Smithery](https://smithery.ai/server/polymarket_mcp):
+- `GEMINI_API_KEY`: Your Google Gemini API key (required for AI analysis)
 
-```bash
-npx -y @smithery/cli install polymarket_mcp --client claude
-```
+## Tools Available
 
-#### Claude Desktop
-- On MacOS: `~/Library/Application\ Support/Claude/claude_desktop_config.json`
-- On Windows: `%APPDATA%/Claude/claude_desktop_config.json`
+1. `refresh-prediction-markets`: Refresh market data
+2. `fetch-prediction-markets`: Search markets by query
+3. `fetch-prediction-market-details`: Get detailed market information
+4. `research-prediction-markets-outcome-impact`: Analyze historical trends
+5. `analyze-portfolio-with-markets`: Portfolio impact analysis
+6. `verify-portfolio-risk-claims`: Verify risk analysis claims
 
-<summary>Development/Unpublished Servers Configuration</summary>
+## Integration with Claude Desktop
 
+1. Update your Claude Desktop configuration:
 ```json
+{
     "mcpServers": {
-        "polymarket-mcp": {
-            "command": "uv",
+        "polymarket_enhanced": {
+            "command": "sh",
             "args": [
-            "--directory",
-            "/Users/{INSERT_USER}/YOUR/PATH/TO/polymarket-mcp",
-            "run",
-            "polymarket-mcp" //or src/polymarket_mcp/server.py
+                "-c",
+                "cd /path/to/Mcp-polymarket && source venv/bin/activate && python3 enhanced_server_v3.py"
             ],
-            "env": {
-                "KEY": "<insert poly market api key>",
-                "FUNDER": "<insert polymarket wallet address"
-            }
+            "restartOnExit": true,
+            "maxRestarts": 5
         }
     }
-```
-
-### Running Locally
-1. Clone the repository and install dependencies:
-
-#### Install Libraries
-```
-uv pip install -e .
-```
-
-### Running 
-After connecting Claude client with the MCP tool via json file and installing the packages, Claude should see the server's mcp tools:
-
-You can run the sever yourself via:
-In polymarket-mcp repo: 
-```
-uv run src/polymarket_mcp/server.py
-```
-
-*if you want to run the server inspector along with the server: 
-```
-npx @modelcontextprotocol/inspector uv --directory C:\\Users\\{INSERT_USER}\\YOUR\\PATH\\TO\\polymarket-mcp run src/polymarket_mcp/server.py
-```
-
-2. Create a `.env` file with your PolyMarket API key:
-```
-Key=your_api_key_here
-Funder=poly market wallet address
-```
-
-After connecting Claude client with the MCP tool via json file, run the server:
-In alpha-vantage-mcp repo: `uv run src/polymarket_mcp/server.py`
-
-
-## Available Tools
-
-The server implements four tools:
-- `get-market-info`: Get detailed information about a specific prediction market
-- `list-markets`: List available prediction markets with filtering options
-- `get-market-prices`: Get current prices and trading information
-- `get-market-history`: Get historical price and volume data
-
-### get-market-info
-
-**Input Schema:**
-```json
-{
-    "market_id": {
-        "type": "string",
-        "description": "Market ID or slug"
-    }
 }
 ```
 
-**Example Response:**
-```
-Title: Example Market
-Category: Politics
-Status: Open
-Resolution Date: 2024-12-31
-Volume: $1,234,567.89
-Liquidity: $98,765.43
-Description: This is an example prediction market...
----
-```
+2. Restart Claude Desktop to apply the changes.
 
-### list-markets
+## Notes
 
-**Input Schema:**
-```json
-{
-    "status": {
-        "type": "string",
-        "description": "Filter by market status",
-        "enum": ["open", "closed", "resolved"]
-    },
-    "limit": {
-        "type": "integer",
-        "description": "Number of markets to return",
-        "default": 10,
-        "minimum": 1,
-        "maximum": 100
-    },
-    "offset": {
-        "type": "integer",
-        "description": "Number of markets to skip (for pagination)",
-        "default": 0,
-        "minimum": 0
-    }
-}
-```
-
-**Example Response:**
-```
-Available Markets:
-
-ID: market-123
-Title: US Presidential Election 2024
-Status: Open
-Volume: $1,234,567.89
----
-
-ID: market-124
-Title: Oscar Best Picture 2024
-Status: Open
-Volume: $234,567.89
----
-```
-
-### get-market-prices
-
-**Input Schema:**
-```json
-{
-    "market_id": {
-        "type": "string",
-        "description": "Market ID or slug"
-    }
-}
-```
-
-**Example Response:**
-```
-Current Market Prices for US Presidential Election 2024
-
-Outcome: Democratic
-Price: $0.6500
-Probability: 65.0%
----
-
-Outcome: Republican
-Price: $0.3500
-Probability: 35.0%
----
-```
-
-### get-market-history
-
-**Input Schema:**
-```json
-{
-    "market_id": {
-        "type": "string",
-        "description": "Market ID or slug"
-    },
-    "timeframe": {
-        "type": "string",
-        "description": "Time period for historical data",
-        "enum": ["1d", "7d", "30d", "all"],
-        "default": "7d"
-    }
-}
-```
-
-**Example Response:**
-```
-Historical Data for US Presidential Election 2024
-Time Period: 7d
-
-Time: 2024-01-20T12:00:00Z
-Price: $0.6500
-Volume: $123,456.78
----
-
-Time: 2024-01-19T12:00:00Z
-Price: $0.6300
-Volume: $98,765.43
----
-```
-
-## Error Handling
-
-The server includes comprehensive error handling for various scenarios:
-
-- Rate limiting (429 errors)
-- Invalid API keys (403 errors)
-- Invalid market IDs (404 errors)
-- Network connectivity issues
-- API timeout conditions (30-second timeout)
-- Malformed responses
-
-Error messages are returned in a clear, human-readable format.
-
-## Prerequisites
-
-- Python 3.9 or higher
-- httpx>=0.24.0
-- mcp-core
-- python-dotenv>=1.0.0
+- The server requires Python 3.8 or higher
+- Make sure to keep your API keys secure and never commit them to version control
+- The AI analysis features require a valid Gemini API key
 
 

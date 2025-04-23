@@ -14,6 +14,10 @@ from mcp.server import NotificationOptions, Server
 import mcp.server.stdio
 from collections import defaultdict
 import numpy as np
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Version information
 VERSION = "0.3.4"
@@ -23,9 +27,13 @@ try:
     import google.generativeai as genai
     HAS_GEMINI = True
     # Configure Gemini API
-    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "AIzaSyB4vsx2Qj93x-1TSVDuiyEcLkrET0vG78I")
-    genai.configure(api_key=GEMINI_API_KEY)
-    print("Successfully loaded Google Generative AI")
+    GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+    if not GEMINI_API_KEY:
+        print("Warning: GEMINI_API_KEY not found in environment variables")
+        HAS_GEMINI = False
+    else:
+        genai.configure(api_key=GEMINI_API_KEY)
+        print("Successfully loaded Google Generative AI")
 except ImportError:
     HAS_GEMINI = False
     print("Google Generative AI not available, using fallback analysis")
@@ -42,65 +50,73 @@ logger = logging.getLogger("polymarket_enhanced_v3")
 DEFAULT_RISK_FREE_RATE = 0.045  # 4.5% risk-free rate
 POLYMARKET_API_BASE = "https://gamma-api.polymarket.com"
 MAX_QUERY_LIMIT = 1000
-DATA_REFRESH_MINUTES = 30
+DATA_REFRESH_MINUTES = 1  # Reduced from 30 to 1 minute for more frequent updates
 
-# In-memory storage for our "vector DB"
+# In-memory storage with timestamps
 market_data = []
 last_refresh_time = None
-# Vector-like embeddings storage (simple in-memory)
 vector_db = []
+market_update_times = {}  # Track last update time for each market
 
 server = Server("polymarket_enhanced")
 
 async def fetch_markets_from_endpoint(url: str, client: httpx.AsyncClient) -> List[Dict]:
     """
-    Fetch markets from a specific PolyMarket API endpoint.
+    Fetch markets from a specific PolyMarket API endpoint with improved error handling and retries.
+    """
+    max_retries = 3
+    retry_delay = 1  # seconds
+    
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"Fetching from: {url}")
+            response = await client.get(url, timeout=10.0)  # Reduced timeout for faster updates
+            response.raise_for_status()
+            data = response.json()
+            
+            if isinstance(data, list):
+                logger.info(f"Successfully fetched {len(data)} markets from {url}")
+                # Add timestamp to each market
+                current_time = datetime.now()
+                for market in data:
+                    market['_fetched_at'] = current_time.isoformat()
+                return data
+            else:
+                logger.warning(f"Unexpected response format from {url}: {type(data)}")
+                return []
+                
+        except httpx.HTTPStatusError as e:
+            logger.error(f"HTTP error fetching from {url}: {str(e)}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(retry_delay)
+                continue
+            return []
+            
+        except Exception as e:
+            logger.error(f"Error fetching from {url}: {str(e)}")
+            if attempt < max_retries - 1:
+                await asyncio.sleep(retry_delay)
+                continue
+            return []
+    
+    return []
+
+async def refresh_prediction_markets(force: bool = False) -> List[Dict]:
+    """
+    Fetch and update market data from PolyMarket public API endpoints with improved refresh logic.
     
     Args:
-        url: The API endpoint URL
-        client: The httpx client to use
-        
-    Returns:
-        List of market data dictionaries
-        
-    Raises:
-        HTTPStatusError: On HTTP errors (handled internally)
-        Exception: On other errors (handled internally)
-    """
-    try:
-        logger.info(f"Fetching from: {url}")
-        response = await client.get(url)
-        response.raise_for_status()
-        data = response.json()
-        # The API returns an array directly
-        if isinstance(data, list):
-            logger.info(f"Successfully fetched {len(data)} markets from {url}")
-            return data
-        else:
-            logger.warning(f"Unexpected response format from {url}: {type(data)}")
-            return []
-    except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error fetching from {url}: {str(e)}")
-        return []
-    except Exception as e:
-        logger.error(f"Error fetching from {url}: {str(e)}")
-        return []
-
-async def refresh_prediction_markets() -> List[Dict]:
-    """
-    Fetch and update market data from PolyMarket public API endpoints.
+        force: Force refresh regardless of time elapsed
     
     Returns:
         List of processed market data dictionaries
-        
-    Note:
-        Updates global market_data and vector_db variables
     """
-    global market_data, last_refresh_time, vector_db
+    global market_data, last_refresh_time, vector_db, market_update_times
     
-    # Check if we've refreshed in the last 30 minutes
     current_time = datetime.now()
-    if last_refresh_time and (current_time - last_refresh_time) < timedelta(minutes=DATA_REFRESH_MINUTES):
+    
+    # Check if we need to refresh
+    if not force and last_refresh_time and (current_time - last_refresh_time) < timedelta(minutes=DATA_REFRESH_MINUTES):
         logger.info(f"Using cached data from {last_refresh_time}")
         return market_data
     
@@ -118,7 +134,7 @@ async def refresh_prediction_markets() -> List[Dict]:
     all_markets = []
     
     async with httpx.AsyncClient(timeout=30.0) as client:
-        # Fetch data from all endpoints
+        # Fetch data from all endpoints concurrently
         results = await asyncio.gather(*[
             fetch_markets_from_endpoint(url, client) for url in urls
         ])
@@ -127,17 +143,33 @@ async def refresh_prediction_markets() -> List[Dict]:
         for market_list in results:
             all_markets.extend(market_list)
     
-    # Remove duplicates based on event_id
+    # Remove duplicates and update data based on timestamps
     unique_markets = {}
     for market in all_markets:
         market_id = market.get("id")
-        if market_id and market_id not in unique_markets:
+        if not market_id:
+            continue
+            
+        # Get the fetch timestamp
+        fetch_time = datetime.fromisoformat(market.get('_fetched_at', current_time.isoformat()))
+        
+        # Update only if:
+        # 1. Market is not in unique_markets, or
+        # 2. This is a newer version of the market
+        if (market_id not in unique_markets or 
+            market_id not in market_update_times or 
+            fetch_time > market_update_times[market_id]):
+            
             # Process and enrich the market data
             processed_market = process_market_data(market)
             unique_markets[market_id] = processed_market
+            market_update_times[market_id] = fetch_time
     
     # Update our "vector DB"
     market_data = list(unique_markets.values())
+    
+    # Sort markets by update time (most recent first)
+    market_data.sort(key=lambda x: market_update_times[x.get('event_id', '')], reverse=True)
     
     # Generate vector embeddings for each market
     vector_db = create_vector_db(market_data)
@@ -1731,10 +1763,19 @@ async def handle_call_tool(
             text=f"Error executing tool: {str(e)}"
         )]
 
+async def start_periodic_refresh():
+    """Start periodic refresh of market data."""
+    while True:
+        try:
+            await refresh_prediction_markets(force=True)
+        except Exception as e:
+            logger.error(f"Error in periodic refresh: {str(e)}")
+        await asyncio.sleep(DATA_REFRESH_MINUTES * 60)
+
 async def main():
     """
     Main entry point for the enhanced MCP server.
-    Handles initialization, data loading, and graceful shutdown.
+    Now includes periodic data refresh.
     """
     startup_msg = f"Starting enhanced PolyMarket MCP server v{VERSION}"
     
@@ -1748,15 +1789,14 @@ async def main():
     # Initial data refresh
     try:
         logger.info("Performing initial market data refresh")
-        await refresh_prediction_markets()
+        await refresh_prediction_markets(force=True)
         logger.info(f"Successfully loaded {len(market_data)} markets")
     except Exception as e:
         logger.error(f"Error in initial data refresh: {str(e)}")
         logger.warning("Continuing without initial data - will attempt refresh on first request")
     
-    # Set up signal handlers for graceful shutdown
-    def handle_exit():
-        logger.info("Received exit signal, shutting down server...")
+    # Start periodic refresh task
+    refresh_task = asyncio.create_task(start_periodic_refresh())
     
     # Run server
     try:
@@ -1777,6 +1817,12 @@ async def main():
     except Exception as e:
         logger.error(f"Server error: {str(e)}")
     finally:
+        # Clean up
+        refresh_task.cancel()
+        try:
+            await refresh_task
+        except asyncio.CancelledError:
+            pass
         logger.info("Server shutting down...")
 
 if __name__ == "__main__":
