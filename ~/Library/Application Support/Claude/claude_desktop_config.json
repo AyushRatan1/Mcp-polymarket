@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "polymarket-mcp": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "cd /Users/ayushratan/Documents/polymarket-mcp && source .venv/bin/activate && PYTHONUNBUFFERED=1 python src/polymarket_mcp/server.py 2>/tmp/polymarket_server.log"
+      ],
+      "restartOnExit": true,
+      "maxRestarts": 5
+    }
+  }
+} 

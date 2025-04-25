@@ -1,0 +1,15 @@
+# HTTP and API Libraries
+httpx==0.25.1
+
+# Data Processing
+numpy==1.26.0
+scipy==1.11.3
+
+# AI and ML (optional)
+google-generativeai==0.3.2
+
+# MCP Protocol
+mcp==0.4.3
+
+# Utilities
+python-dotenv==1.0.0 
